@@ -1,0 +1,6 @@
+# Pentarou keeps dependencies minimal by design
+# Matrix posting uses stdlib urllib — no SDK needed
+# Docker inspection uses subprocess — no Docker SDK needed
+
+pyyaml>=6.0
+pytest>=8.0

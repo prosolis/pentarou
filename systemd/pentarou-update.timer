@@ -1,0 +1,11 @@
+[Unit]
+Description=Pentarou scheduled update timer
+
+[Timer]
+# Default: 06:00 UTC daily
+# Adjust to match your configured update_time
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

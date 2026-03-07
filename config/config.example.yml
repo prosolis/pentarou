@@ -1,0 +1,37 @@
+matrix:
+  homeserver: "https://matrix.yourdomain.com"
+  room_id: "!roomid:yourdomain.com"
+  # Override with PENTAROU_MATRIX_TOKEN env var -- never hardcode in production
+  access_token: "YOUR_ACCESS_TOKEN_HERE"
+  bot_displayname: "Pentarou"
+
+mash:
+  playbook_dir: "/path/to/mash-playbook"
+  just_bin: "just"  # override if not in PATH
+
+schedule:
+  # UTC 06:00 is the globally least-bad window for distributed communities:
+  # Seattle ~10pm | Lisbon 6am | London 6am | Tokyo 3pm | Sydney 4pm
+  update_time: "06:00"
+  timezone: "UTC"
+  warn_minutes_before: 5
+
+notifications:
+  skip_if_no_changes: true
+  include_supporting_services: true
+
+  # Optional: human-friendly display names for containers
+  # Falls back to container name if not listed
+  service_names:
+    akkoma: "Akkoma"
+    pixelfed: "PixelFed"
+    lemmy: "Lemmy"
+    lemmy-ui: "Lemmy UI"
+    writefreely: "WriteFreely"
+    funkwhale: "Funkwhale"
+    funkwhale-api: "Funkwhale API"
+    funkwhale-beat: "Funkwhale Beat"
+    postgres: "PostgreSQL"
+    redis: "Redis"
+    traefik: "Traefik"
+    ddclient: "ddclient"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Pentarou pre-update warning timer
+
+[Timer]
+# Default: 05:55 UTC (5 minutes before the 06:00 update window)
+# Adjust to match your configured update_time minus warn_minutes_before
+OnCalendar=*-*-* 05:55:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

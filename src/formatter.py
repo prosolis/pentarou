@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 
 
@@ -11,70 +12,71 @@ def _short_digest(digest: str) -> str:
     return digest[:19]
 
 
-def format_update_summary(diff_result: dict, config: dict) -> tuple[str, str]:
+def _clean_container_name(raw: str) -> str:
+    """Strip leading / and common prefixes like mash-."""
+    name = raw.lstrip("/")
+    if name.startswith("mash-"):
+        name = name[5:]
+    return name
+
+
+def parse_watchtower_message(message: str) -> list[dict]:
+    """Parse Watchtower's report message into a list of updated containers.
+
+    Handles common Watchtower report formats:
+      - "Updating /mash-akkoma (sha256:aaa to sha256:bbb)"
+      - "Updating container /mash-akkoma (sha256:aaa to sha256:bbb)"
+    """
+    updates = []
+
+    pattern = re.compile(
+        r"[Uu]pdat(?:ing|ed)\s+(?:container\s+)?"
+        r"(/?\S+)"
+        r"\s+\((\S+)\s+to\s+(\S+)\)"
+    )
+
+    for match in pattern.finditer(message):
+        raw_name, old_digest, new_digest = match.groups()
+        updates.append({
+            "name": _clean_container_name(raw_name),
+            "old_digest": old_digest,
+            "new_digest": new_digest,
+        })
+
+    return updates
+
+
+def format_update_report(
+    message: str, config: dict,
+) -> tuple[str, str] | None:
+    """Format a Watchtower message into a Matrix notification.
+
+    Returns (plain, html) or None if there are no updates to report.
+    """
+    updates = parse_watchtower_message(message)
+    if not updates:
+        return None
+
     service_names = config.get("notifications", {}).get("service_names", {})
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    lines = ["\U0001f427 **Pentarou -- Update Complete**", ""]
+    lines = ["\U0001f427 **Pentarou \u2014 Update Report**", ""]
 
-    updated = diff_result.get("updated", [])
-    if updated:
-        lines.append(f"**Updated ({len(updated)})**")
-        for entry in updated:
-            name = _display_name(entry["name"], service_names)
-            old = _short_digest(entry["old_digest"])
-            new = _short_digest(entry["new_digest"])
-            lines.append(f"- {name}: `{old}` -> `{new}`")
-        lines.append("")
+    for entry in updates:
+        name = _display_name(entry["name"], service_names)
+        old = _short_digest(entry["old_digest"])
+        new = _short_digest(entry["new_digest"])
+        lines.append(f"- {name}: `{old}` \u2192 `{new}`")
 
-    added = diff_result.get("added", [])
-    if added:
-        lines.append(f"**Added ({len(added)})**")
-        for entry in added:
-            name = _display_name(entry["name"], service_names)
-            lines.append(f"- {name} (new)")
-        lines.append("")
-
-    removed = diff_result.get("removed", [])
-    if removed:
-        lines.append(f"**Removed ({len(removed)})**")
-        for entry in removed:
-            name = _display_name(entry["name"], service_names)
-            lines.append(f"- {name}")
-        lines.append("")
-
-    lines.append(f"Run completed: {now}")
+    lines.append("")
+    lines.append(now)
 
     plain = "\n".join(lines)
     html = _markdown_to_html(plain)
     return plain, html
 
 
-def format_warning(minutes: int) -> tuple[str, str]:
-    plain = (
-        f"\U0001f427 Pentarou: Scheduled maintenance starting in {minutes} minutes.\n"
-        "Brief service interruptions are possible."
-    )
-    html = plain.replace("\n", "<br>")
-    return plain, html
-
-
-def format_start() -> tuple[str, str]:
-    plain = "\U0001f427 Pentarou: Update run starting now."
-    return plain, plain
-
-
-def format_failure(exit_code: int) -> tuple[str, str]:
-    plain = (
-        f"\U0001f427 Pentarou: Update run failed (exit code {exit_code}).\n"
-        "One or more services may be affected. Manual inspection required."
-    )
-    html = plain.replace("\n", "<br>")
-    return plain, html
-
-
 def _markdown_to_html(text: str) -> str:
-    import re
     html = text
     html = re.sub(r'`([^`]+)`', r'<code>\1</code>', html)
     html = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', html)

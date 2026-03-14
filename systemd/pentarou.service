@@ -1,0 +1,15 @@
+[Unit]
+Description=Pentarou — Infrastructure Update Announcer
+After=network.target
+
+[Service]
+Type=simple
+User=pentarou
+EnvironmentFile=/opt/pentarou/.env
+WorkingDirectory=/opt/pentarou
+ExecStart=/opt/pentarou/.venv/bin/python -m src
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

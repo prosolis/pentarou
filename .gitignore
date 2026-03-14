@@ -1,7 +1,3 @@
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
+pentarou
 config/config.yml
 .env
-*.db

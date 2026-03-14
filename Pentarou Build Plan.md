@@ -26,22 +26,22 @@ owns the update lifecycle entirely. Pentarou owns the announcement.
 - Watchtower runs on the same host, monitoring all mash-playbook containers
 - Matrix/Synapse lives on a SEPARATE host — Pentarou posts TO that Matrix instance,
   it does not run alongside it
-- Python 3.11+, minimal dependencies
+- Go, single static binary, minimal dependencies
 
 ## Architecture
 ```
-src/
-  server.py         # lightweight HTTP server, receives Watchtower webhook POSTs
-  formatter.py      # turns Watchtower JSON payload into readable Matrix markdown
-  notify.py         # posts messages to Matrix room via Client-Server API, with retry logic
-  config.py         # loads and validates config.yml, handles env var overrides
+main.go             # entry point, loads config, starts server
+server.go           # lightweight HTTP server, receives Watchtower webhook POSTs
+formatter.go        # turns Watchtower JSON payload into readable Matrix markdown
+notify.go           # posts messages to Matrix room via Client-Server API, with retry logic
+config.go           # loads and validates config.yml, handles env var overrides
 systemd/
   pentarou.service  # runs the webhook receiver as a persistent service
 config/
   config.example.yml
-tests/
-  test_formatter.py
-  test_notify.py
+formatter_test.go
+notify_test.go
+server_test.go
 ```
 
 ## Watchtower Integration
@@ -91,7 +91,7 @@ Nothing. Silence is correct when nothing changed.
 Log it, return HTTP 400, do not post to Matrix.
 
 ## Matrix Integration
-- Uses Matrix Client-Server API directly via stdlib urllib — no SDK
+- Uses Matrix Client-Server API directly via Go's net/http — no SDK
 - Posts as a dedicated bot user (@pentarou:yourdomain.com)
 - Messages use Matrix markdown formatting (formatted_body)
 - Bot user requires an access token with send message permission in the target room
@@ -165,9 +165,9 @@ The formatter should accept an optional `changelog_summary` field per service
 so this can be added later without restructuring.
 
 ## Dependencies
-- pyyaml — config loading
-- pytest — tests
-- Everything else: Python stdlib only (http.server for webhook, urllib for Matrix)
+- gopkg.in/yaml.v3 — config loading
+- github.com/google/uuid — Matrix transaction IDs
+- Everything else: Go stdlib only (net/http for webhook and Matrix)
 
 ## Naming Convention — Bot Ecosystem
 - **Bellhop** — media request portal

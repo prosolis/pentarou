@@ -1,6 +1,0 @@
-# Pentarou keeps dependencies minimal by design
-# Matrix posting uses stdlib urllib -- no SDK needed
-# Webhook server uses stdlib http.server -- no framework needed
-
-pyyaml>=6.0
-pytest>=8.0

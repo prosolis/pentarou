@@ -14,18 +14,24 @@ Named after Pentarou the penguin from the Parodius franchise (Konami). Part of t
 
 ## Requirements
 
-- Python 3.11+
+- Go 1.21+ (build only -- the binary has no runtime dependencies)
 - A Matrix bot user with message-send permission in the target room
 - Watchtower configured to send generic webhook notifications
 - systemd (Pentarou runs as a persistent service)
 
 ## Installation
 
-### 1. Clone and configure
+### 1. Build
 
 ```bash
 git clone https://github.com/prosolis/Pentarou.git
 cd Pentarou
+go build -o pentarou .
+```
+
+### 2. Configure
+
+```bash
 cp config/config.example.yml config/config.yml
 ```
 
@@ -48,14 +54,6 @@ notifications:
     mash-akkoma: "Akkoma"
     mash-pixelfed: "PixelFed"
     mash-postgres: "PostgreSQL"
-```
-
-### 2. Set up a virtual environment
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
 ### 3. Set the Matrix token
@@ -83,9 +81,11 @@ watchtower_notification_url: "generic+http://localhost:8088/webhook"
 watchtower_notification_report: true
 ```
 
-### 5. Install systemd service
+### 5. Deploy
 
 ```bash
+sudo cp pentarou /opt/pentarou/
+sudo cp config/config.yml /opt/pentarou/config/
 sudo cp systemd/pentarou.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now pentarou.service
@@ -96,11 +96,11 @@ sudo systemctl enable --now pentarou.service
 ### Manual run
 
 ```bash
-# Start the webhook server
-python -m src
+# Start the webhook server (default config path: config/config.yml)
+./pentarou
 
 # With an alternate config file
-python -m src -c /etc/pentarou/config.yml
+./pentarou -config /etc/pentarou/config.yml
 ```
 
 ### Test with curl
@@ -150,7 +150,7 @@ Logged server-side, HTTP 400 returned to Watchtower. Nothing posted to Matrix.
 
 ## Matrix Setup
 
-Pentarou talks to Matrix directly via the Client-Server API using Python's stdlib `urllib`. No SDK, no extra dependencies.
+Pentarou talks to Matrix directly via the Client-Server API using Go's `net/http`. No SDK, no extra dependencies beyond the standard library and a YAML parser.
 
 1. Create a bot user on your homeserver (e.g. `@pentarou:yourdomain.com`)
 2. Generate an access token for the bot
@@ -163,22 +163,20 @@ The bot only needs `m.room.message` send permission.
 
 ```
 Pentarou/
-├── src/
-│   ├── __main__.py      # Entry point -- starts webhook server
-│   ├── server.py        # HTTP server, receives Watchtower webhook POSTs
-│   ├── formatter.py     # Parses Watchtower JSON into Matrix markdown
-│   ├── notify.py        # Matrix posting via urllib, 3x retry with backoff
-│   └── config.py        # YAML config + PENTAROU_MATRIX_TOKEN env override
+├── main.go              # Entry point -- loads config, starts server
+├── server.go            # HTTP handler for /webhook
+├── formatter.go         # Parses Watchtower message into Matrix markdown
+├── notify.go            # Matrix posting via net/http, 3x retry with backoff
+├── config.go            # YAML config + PENTAROU_MATRIX_TOKEN env override
+├── formatter_test.go
+├── notify_test.go
+├── server_test.go
 ├── config/
 │   └── config.example.yml
 ├── systemd/
 │   └── pentarou.service
-├── tests/
-│   ├── test_formatter.py
-│   ├── test_notify.py
-│   └── test_server.py
-├── requirements.txt
-└── README.md
+├── go.mod
+└── go.sum
 ```
 
 ## Configuration Reference
@@ -197,15 +195,14 @@ Pentarou/
 ## Running Tests
 
 ```bash
-source .venv/bin/activate
-python -m pytest tests/ -v
+go test ./... -v
 ```
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `FileNotFoundError: config/config.yml` | Config file doesn't exist yet | `cp config/config.example.yml config/config.yml` and edit it |
+| Config file not found | Config file doesn't exist yet | `cp config/config.example.yml config/config.yml` and edit it |
 | `PENTAROU_MATRIX_TOKEN` not taking effect | Env var not exported, or `.env` path wrong in systemd unit | Verify `EnvironmentFile=` in the service unit points to your actual `.env` |
 | Matrix post returns 403 | Bot not in the room or lacks permission | Invite the bot and make sure it has send-message permission |
 | Matrix post returns 401 | Access token is wrong or expired | Regenerate the token, update config or env var |

@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -16,8 +20,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := RunServer(cfg); err != nil {
+	var notifier Notifier
+	if cfg.Matrix.Encryption {
+		bot, err := NewMatrixBot(&cfg.Matrix)
+		if err != nil {
+			log.Printf("FATAL: failed to initialize Matrix bot: %v", err)
+			os.Exit(1)
+		}
+		defer bot.Close()
+		notifier = bot
+	} else {
+		notifier = &LegacyNotifier{cfg: cfg}
+	}
+
+	srv := RunServer(cfg, notifier)
+
+	// Graceful shutdown on SIGINT/SIGTERM.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("INFO: Received %s, shutting down...", sig)
+		srv.Shutdown(context.Background())
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("FATAL: %v", err)
 		os.Exit(1)
 	}
+
+	log.Printf("INFO: Pentarou stopped")
 }

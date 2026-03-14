@@ -5,6 +5,12 @@ matrix:
   access_token: "YOUR_ACCESS_TOKEN_HERE"
   bot_displayname: "Pentarou"
 
+  # E2EE settings (enabled by default -- set false for unencrypted rooms only)
+  encryption: true
+  device_id: "PENTAROU"             # stable device ID, do not change after first run
+  database_path: "pentarou-crypto.db"  # SQLite DB for crypto state
+  pickle_key: "pentarou"            # key to encrypt crypto store at rest
+
 webhook:
   host: "127.0.0.1"  # localhost only, no public exposure needed
   port: 8088

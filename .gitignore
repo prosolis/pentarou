@@ -1,3 +1,4 @@
 pentarou
 config/config.yml
 .env
+*.db

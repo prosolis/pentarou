@@ -14,7 +14,7 @@ type watchtowerPayload struct {
 	Level   string `json:"level"`
 }
 
-func NewWebhookHandler(cfg *Config) http.Handler {
+func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -51,24 +51,28 @@ func NewWebhookHandler(cfg *Config) http.Handler {
 				log.Printf("INFO: No updates in payload -- skipping notification")
 			} else {
 				log.Printf("INFO: No updates in payload (posting anyway per config)")
-				noChangePlain := "\U0001f427 **Pentarou \u2014 Update Report**\n\nAll containers are up to date."
-				noChangeHTML := "<p>\U0001f427 <strong>Pentarou \u2014 Update Report</strong></p><p>All containers are up to date.</p>"
-				Send(cfg, noChangePlain, noChangeHTML)
+				noChangePlain := "🐧 **Pentarou — Update Report**\n\nAll containers are up to date."
+				noChangeHTML := "<p>🐧 <strong>Pentarou — Update Report</strong></p><p>All containers are up to date.</p>"
+				if err := notifier.SendMessage(r.Context(), noChangePlain, noChangeHTML); err != nil {
+					log.Printf("ERROR: %v", err)
+				}
 			}
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		Send(cfg, plain, html)
+		if err := notifier.SendMessage(r.Context(), plain, html); err != nil {
+			log.Printf("ERROR: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
 	return mux
 }
 
-func RunServer(cfg *Config) error {
+func RunServer(cfg *Config, notifier Notifier) *http.Server {
 	addr := fmt.Sprintf("%s:%d", cfg.Webhook.Host, cfg.Webhook.Port)
-	handler := NewWebhookHandler(cfg)
+	handler := NewWebhookHandler(cfg, notifier)
 	log.Printf("INFO: Pentarou listening on %s", addr)
-	return http.ListenAndServe(addr, handler)
+	return &http.Server{Addr: addr, Handler: handler}
 }

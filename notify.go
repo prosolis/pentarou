@@ -15,7 +15,6 @@ import (
 
 const (
 	maxRetries  = 3
-	backoffBase = 2
 	httpTimeout = 30 * time.Second
 )
 
@@ -89,12 +88,3 @@ func PostMessage(homeserver, roomID, accessToken, plainBody, htmlBody string) bo
 	return false
 }
 
-func Send(cfg *Config, plainBody, htmlBody string) bool {
-	return PostMessage(
-		cfg.Matrix.Homeserver,
-		cfg.Matrix.RoomID,
-		cfg.Matrix.AccessToken,
-		plainBody,
-		htmlBody,
-	)
-}

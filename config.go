@@ -18,6 +18,10 @@ type MatrixConfig struct {
 	RoomID         string `yaml:"room_id"`
 	AccessToken    string `yaml:"access_token"`
 	BotDisplayname string `yaml:"bot_displayname"`
+	Encryption     bool   `yaml:"encryption"`
+	DeviceID       string `yaml:"device_id"`
+	DatabasePath   string `yaml:"database_path"`
+	PickleKey      string `yaml:"pickle_key"`
 }
 
 type WebhookConfig struct {
@@ -40,6 +44,10 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Webhook.Host = "127.0.0.1"
 	cfg.Webhook.Port = 8088
 	cfg.Notifications.SkipIfNoChanges = true
+	cfg.Matrix.Encryption = true
+	cfg.Matrix.DeviceID = "PENTAROU"
+	cfg.Matrix.DatabasePath = "pentarou-crypto.db"
+	cfg.Matrix.PickleKey = "pentarou"
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)

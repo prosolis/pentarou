@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -26,10 +27,10 @@ func TestPostMessageSendsCorrectly(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := PostMessage(server.URL, "!test:example.com", "syt_testtoken", "Hello", "<p>Hello</p>")
+	err := PostMessage(context.Background(), server.URL, "!test:example.com", "syt_testtoken", "Hello", "<p>Hello</p>")
 
-	if !result {
-		t.Fatal("expected result=true")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 	if receivedMethod != "PUT" {
 		t.Errorf("expected PUT, got %s", receivedMethod)
@@ -61,10 +62,10 @@ func TestPostMessagePlainOnly(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := PostMessage(server.URL, "!test:example.com", "token", "Plain message", "")
+	err := PostMessage(context.Background(), server.URL, "!test:example.com", "token", "Plain message", "")
 
-	if !result {
-		t.Fatal("expected result=true")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 	if receivedBody.FormattedBody != "" {
 		t.Error("expected no formatted_body for plain-only message")
@@ -75,8 +76,30 @@ func TestPostMessagePlainOnly(t *testing.T) {
 }
 
 func TestPostMessageRetriesOnFailure(t *testing.T) {
-	result := PostMessage("http://127.0.0.1:1", "!test:example.com", "token", "Should fail", "")
-	if result {
-		t.Error("expected result=false for unreachable server")
+	err := PostMessage(context.Background(), "http://127.0.0.1:1", "!test:example.com", "token", "Should fail", "")
+	if err == nil {
+		t.Error("expected error for unreachable server")
+	}
+}
+
+func TestPostMessageReturnsErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	err := PostMessage(context.Background(), server.URL, "!test:example.com", "token", "test", "")
+	if err == nil {
+		t.Error("expected error for 403 response")
+	}
+}
+
+func TestPostMessageRespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := PostMessage(ctx, "http://127.0.0.1:1", "!test:example.com", "token", "test", "")
+	if err == nil {
+		t.Error("expected error for cancelled context")
 	}
 }

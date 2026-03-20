@@ -1,121 +1,125 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
-	"time"
+	"html"
+	"log"
 )
 
-type Update struct {
-	Name      string
-	OldDigest string
-	NewDigest string
+// watchtowerPayload is the Watchtower json.v1 notification format.
+// When delivered via Shoutrrr's generic webhook, the json.v1 output may be
+// wrapped in a {"message": "<json string>"} envelope — ParseWatchtowerPayload
+// handles both cases automatically.
+type watchtowerPayload struct {
+	Title   string          `json:"title"`
+	Host    string          `json:"host"`
+	Message string          `json:"message"` // Shoutrrr wrapper field
+	Report  containerReport `json:"report"`
 }
 
-var updatePattern = regexp.MustCompile(
-	`(?i)updat(?:ing|ed)\s+(?:container\s+)?` +
-		`(/?[^\s]+)` +
-		`\s+\((\S+)\s+to\s+(\S+)\)`,
-)
-
-func cleanContainerName(raw string) string {
-	name := strings.TrimLeft(raw, "/")
-	if strings.HasPrefix(name, "mash-") {
-		name = name[5:]
-	}
-	return name
+type containerReport struct {
+	Scanned []containerInfo `json:"scanned"`
+	Updated []containerInfo `json:"updated"`
+	Failed  []containerInfo `json:"failed"`
+	Skipped []containerInfo `json:"skipped"`
+	Stale   []containerInfo `json:"stale"`
+	Fresh   []containerInfo `json:"fresh"`
 }
 
-func shortDigest(digest string) string {
-	if strings.HasPrefix(digest, "sha256:") && len(digest) > 19 {
-		return "sha256:" + digest[7:19]
-	}
-	if len(digest) > 19 {
-		return digest[:19]
-	}
-	return digest
+type containerInfo struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	ImageName      string `json:"imageName"`
+	CurrentImageID string `json:"currentImageId"`
+	LatestImageID  string `json:"latestImageId"`
+	State          string `json:"state"`
 }
 
-func displayName(containerName string, serviceNames map[string]string) string {
-	if name, ok := serviceNames[containerName]; ok {
-		return name
-	}
-	return containerName
+// RepoMap maps container names to GitHub owner/repo for release note lookups.
+var RepoMap = map[string]string{
+	"akkoma-akkoma-1":       "akkoma-im/akkoma",
+	"lemmy-lemmy-1":         "LemmyNet/lemmy",
+	"lemmy-lemmy-ui-1":      "LemmyNet/lemmy-ui",
+	"lemmy-pictrs-1":        "asonix/pictrs",
+	"mash-authentik-server": "goauthentik/authentik",
+	"mash-miniflux":         "miniflux/miniflux",
+	"mash-traefik":          "traefik/traefik",
+	"mash-uptime-kuma":      "louislam/uptime-kuma",
+	"mash-writefreely":      "writefreely/writefreely",
 }
 
-func ParseWatchtowerMessage(message string) []Update {
-	matches := updatePattern.FindAllStringSubmatch(message, -1)
-	updates := make([]Update, 0, len(matches))
-	for _, m := range matches {
-		updates = append(updates, Update{
-			Name:      cleanContainerName(m[1]),
-			OldDigest: m[2],
-			NewDigest: m[3],
-		})
-	}
-	return updates
-}
-
-func FormatUpdateReport(message string, cfg *Config) (plain, html string, ok bool) {
-	updates := ParseWatchtowerMessage(message)
-	if len(updates) == 0 {
-		return "", "", false
+// ParseWatchtowerPayload parses a Watchtower json.v1 payload from raw bytes.
+// It handles two delivery formats:
+//   - Direct: the json.v1 JSON is the raw HTTP body (report field at top level)
+//   - Shoutrrr wrapper: json.v1 is a JSON string inside {"message": "..."}
+func ParseWatchtowerPayload(body []byte) (*watchtowerPayload, error) {
+	var payload watchtowerPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	serviceNames := cfg.Notifications.ServiceNames
-	now := time.Now().UTC().Format("2006-01-02 15:04 UTC")
-
-	var lines []string
-	lines = append(lines, "\U0001f427 **Pentarou \u2014 Update Report**", "")
-
-	for _, u := range updates {
-		name := displayName(u.Name, serviceNames)
-		old := shortDigest(u.OldDigest)
-		new_ := shortDigest(u.NewDigest)
-		lines = append(lines, fmt.Sprintf("- %s: `%s` \u2192 `%s`", name, old, new_))
+	// If report is populated, this is a direct json.v1 payload.
+	if hasReportData(&payload.Report) {
+		return &payload, nil
 	}
 
-	lines = append(lines, "", now)
-
-	plain = strings.Join(lines, "\n")
-	html = markdownToHTML(plain)
-	return plain, html, true
-}
-
-var (
-	reCode = regexp.MustCompile("`([^`]+)`")
-	reBold = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-)
-
-func markdownToHTML(text string) string {
-	html := reCode.ReplaceAllString(text, "<code>$1</code>")
-	html = reBold.ReplaceAllString(html, "<strong>$1</strong>")
-
-	lines := strings.Split(html, "\n")
-	var result []string
-	inList := false
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "- ") {
-			if !inList {
-				result = append(result, "<ul>")
-				inList = true
-			}
-			result = append(result, "<li>"+line[2:]+"</li>")
-		} else {
-			if inList {
-				result = append(result, "</ul>")
-				inList = false
-			}
-			if strings.TrimSpace(line) != "" {
-				result = append(result, "<p>"+line+"</p>")
-			}
+	// Otherwise, try Shoutrrr wrapper: the message field contains the json.v1 JSON string.
+	if payload.Message != "" {
+		var inner watchtowerPayload
+		if err := json.Unmarshal([]byte(payload.Message), &inner); err != nil {
+			return nil, fmt.Errorf("failed to parse json.v1 from message field: %w", err)
+		}
+		if hasReportData(&inner.Report) {
+			return &inner, nil
 		}
 	}
-	if inList {
-		result = append(result, "</ul>")
+
+	return nil, fmt.Errorf("payload has no report data (is WATCHTOWER_NOTIFICATION_TEMPLATE set to json.v1?)")
+}
+
+// hasReportData returns true if any report array is non-nil, indicating a valid json.v1 payload.
+func hasReportData(r *containerReport) bool {
+	return r.Updated != nil || r.Scanned != nil || r.Failed != nil ||
+		r.Skipped != nil || r.Stale != nil || r.Fresh != nil
+}
+
+// FormatContainerUpdate builds a Matrix message for a single container update.
+// All values interpolated into HTML are escaped to prevent injection.
+func FormatContainerUpdate(entry containerInfo, release *GitHubRelease, fetchErr error) (plain, htmlOut string) {
+	_, mapped := RepoMap[entry.Name]
+
+	eName := html.EscapeString(entry.Name)
+	eImage := html.EscapeString(entry.ImageName)
+
+	if !mapped {
+		// Unmapped container — minimal notification, no release notes.
+		plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s", entry.Name, entry.ImageName)
+		htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>", eName, eImage)
+		return
 	}
 
-	return strings.Join(result, "\n")
+	if release == nil || fetchErr != nil {
+		// Mapped but GitHub API failed.
+		plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s\n⚠️ Could not fetch release notes.", entry.Name, entry.ImageName)
+		htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>\n<p>⚠️ Could not fetch release notes.</p>", eName, eImage)
+		if fetchErr != nil {
+			log.Printf("WARNING: GitHub API error for %s: %v", entry.Name, fetchErr)
+		}
+		return
+	}
+
+	eTag := html.EscapeString(release.TagName)
+	eURL := html.EscapeString(release.HTMLURL)
+
+	// Mapped with release notes.
+	// Plain text uses raw values (no HTML rendering). HTML uses escaped values
+	// except for BodyHTML which is pre-rendered by GitHub's own sanitizer.
+	plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s\n🏷️ %s\n📝\n%s\n🔗 %s",
+		entry.Name, entry.ImageName, release.TagName, release.Body, release.HTMLURL)
+
+	htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>\n<p>🏷️ %s</p>\n📝\n%s\n<p>🔗 <a href=\"%s\">%s</a></p>",
+		eName, eImage, eTag, release.BodyHTML, eURL, eURL)
+
+	return
 }

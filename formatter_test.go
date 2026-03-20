@@ -1,161 +1,220 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
 
-var testConfig = &Config{
-	Notifications: NotificationsConfig{
-		ServiceNames: map[string]string{
-			"akkoma":   "Akkoma",
-			"postgres": "PostgreSQL",
-			"pixelfed": "PixelFed",
-		},
-	},
+func TestParseDirectPayload(t *testing.T) {
+	body := []byte(`{
+		"title": "Watchtower updates on myhost",
+		"host": "myhost",
+		"entries": [],
+		"report": {
+			"scanned": [],
+			"updated": [
+				{
+					"id": "abc123",
+					"name": "akkoma-akkoma-1",
+					"imageName": "ghcr.io/akkoma-im/akkoma:latest",
+					"currentImageId": "sha256:aaa111",
+					"latestImageId": "sha256:bbb222",
+					"state": "Updated"
+				}
+			],
+			"failed": [],
+			"skipped": [],
+			"stale": [],
+			"fresh": []
+		}
+	}`)
+
+	payload, err := ParseWatchtowerPayload(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(payload.Report.Updated) != 1 {
+		t.Fatalf("expected 1 updated, got %d", len(payload.Report.Updated))
+	}
+	u := payload.Report.Updated[0]
+	if u.Name != "akkoma-akkoma-1" {
+		t.Errorf("expected name 'akkoma-akkoma-1', got %q", u.Name)
+	}
+	if u.ImageName != "ghcr.io/akkoma-im/akkoma:latest" {
+		t.Errorf("expected image 'ghcr.io/akkoma-im/akkoma:latest', got %q", u.ImageName)
+	}
 }
 
-func TestParseBasicUpdate(t *testing.T) {
-	msg := "Updating /mash-akkoma (sha256:aaabbb111222 to sha256:cccddd333444)"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
+func TestParseShoutrrrWrapper(t *testing.T) {
+	// Shoutrrr wraps the json.v1 output in {"message": "<json string>"}
+	body := []byte(`{"message":"{\"title\":\"Watchtower\",\"host\":\"h\",\"report\":{\"updated\":[{\"name\":\"mash-traefik\",\"imageName\":\"traefik:latest\",\"state\":\"Updated\"}],\"scanned\":[],\"failed\":[],\"skipped\":[],\"stale\":[],\"fresh\":[]}}"}`)
+
+	payload, err := ParseWatchtowerPayload(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if updates[0].Name != "akkoma" {
-		t.Errorf("expected name 'akkoma', got %q", updates[0].Name)
+	if len(payload.Report.Updated) != 1 {
+		t.Fatalf("expected 1 updated, got %d", len(payload.Report.Updated))
 	}
-	if updates[0].OldDigest != "sha256:aaabbb111222" {
-		t.Errorf("unexpected old digest: %q", updates[0].OldDigest)
-	}
-	if updates[0].NewDigest != "sha256:cccddd333444" {
-		t.Errorf("unexpected new digest: %q", updates[0].NewDigest)
+	if payload.Report.Updated[0].Name != "mash-traefik" {
+		t.Errorf("expected name 'mash-traefik', got %q", payload.Report.Updated[0].Name)
 	}
 }
 
-func TestParseWithContainerKeyword(t *testing.T) {
-	msg := "Updating container /mash-pixelfed (sha256:aaa to sha256:bbb)"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
+func TestParseMultipleUpdated(t *testing.T) {
+	body := []byte(`{
+		"title": "Watchtower",
+		"host": "h",
+		"report": {
+			"updated": [
+				{"name": "akkoma-akkoma-1", "imageName": "ghcr.io/akkoma-im/akkoma:latest", "state": "Updated"},
+				{"name": "mash-traefik", "imageName": "traefik:latest", "state": "Updated"},
+				{"name": "akkoma-db-1", "imageName": "postgres:16", "state": "Updated"}
+			],
+			"scanned": [], "failed": [], "skipped": [], "stale": [], "fresh": []
+		}
+	}`)
+
+	payload, err := ParseWatchtowerPayload(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if updates[0].Name != "pixelfed" {
-		t.Errorf("expected name 'pixelfed', got %q", updates[0].Name)
+	if len(payload.Report.Updated) != 3 {
+		t.Fatalf("expected 3 updated, got %d", len(payload.Report.Updated))
 	}
 }
 
-func TestParseMultipleUpdates(t *testing.T) {
-	msg := "Updating /mash-akkoma (sha256:aaa to sha256:bbb)\n" +
-		"Updating /mash-postgres (sha256:ccc to sha256:ddd)\n" +
-		"Updating /mash-pixelfed (sha256:eee to sha256:fff)"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 3 {
-		t.Fatalf("expected 3 updates, got %d", len(updates))
+func TestParseNoReportData(t *testing.T) {
+	body := []byte(`{"title": "test", "message": "just text, not json"}`)
+	_, err := ParseWatchtowerPayload(body)
+	if err == nil {
+		t.Fatal("expected error for payload with no report data")
 	}
-	names := make(map[string]bool)
-	for _, u := range updates {
-		names[u.Name] = true
+}
+
+func TestParseInvalidJSON(t *testing.T) {
+	_, err := ParseWatchtowerPayload([]byte("not json"))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
 	}
-	for _, name := range []string{"akkoma", "postgres", "pixelfed"} {
-		if !names[name] {
-			t.Errorf("expected %q in updates", name)
+}
+
+func TestParseEmptyUpdated(t *testing.T) {
+	body := []byte(`{
+		"title": "Watchtower",
+		"host": "h",
+		"report": {
+			"updated": [],
+			"scanned": [{"name": "foo", "imageName": "foo:latest", "state": "Scanned"}],
+			"failed": [], "skipped": [], "stale": [], "fresh": []
+		}
+	}`)
+
+	payload, err := ParseWatchtowerPayload(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(payload.Report.Updated) != 0 {
+		t.Errorf("expected 0 updated, got %d", len(payload.Report.Updated))
+	}
+}
+
+func TestFormatMappedWithRelease(t *testing.T) {
+	entry := containerInfo{
+		Name:      "akkoma-akkoma-1",
+		ImageName: "ghcr.io/akkoma-im/akkoma:latest",
+	}
+	release := &GitHubRelease{
+		TagName:  "v3.13.0",
+		Body:     "## Changes\n- Fixed a bug",
+		BodyHTML: "<h2>Changes</h2>\n<ul><li>Fixed a bug</li></ul>",
+		HTMLURL:  "https://github.com/akkoma-im/akkoma/releases/tag/v3.13.0",
+	}
+
+	plain, html := FormatContainerUpdate(entry, release, nil)
+
+	for _, want := range []string{"akkoma-akkoma-1", "ghcr.io/akkoma-im/akkoma:latest", "v3.13.0", "Fixed a bug"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("plain missing %q", want)
 		}
 	}
-}
-
-func TestParseNoUpdates(t *testing.T) {
-	msg := "No containers need updating"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 0 {
-		t.Errorf("expected 0 updates, got %d", len(updates))
+	if !strings.Contains(plain, "🔗 https://github.com/akkoma-im/akkoma/releases/tag/v3.13.0") {
+		t.Error("plain missing release URL")
+	}
+	if !strings.Contains(html, "<h2>Changes</h2>") {
+		t.Error("html missing rendered release body")
+	}
+	if !strings.Contains(html, `<a href="https://github.com/akkoma-im/akkoma/releases/tag/v3.13.0"`) {
+		t.Error("html missing release link")
 	}
 }
 
-func TestParsePastTense(t *testing.T) {
-	msg := "Updated /mash-akkoma (sha256:aaa to sha256:bbb)"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
+func TestFormatMappedGitHubError(t *testing.T) {
+	entry := containerInfo{
+		Name:      "mash-traefik",
+		ImageName: "traefik:latest",
+	}
+
+	plain, html := FormatContainerUpdate(entry, nil, fmt.Errorf("rate limited"))
+
+	if !strings.Contains(plain, "⚠️ Could not fetch release notes.") {
+		t.Error("plain missing warning")
+	}
+	if !strings.Contains(html, "⚠️ Could not fetch release notes.") {
+		t.Error("html missing warning")
+	}
+	if !strings.Contains(plain, "mash-traefik") {
+		t.Error("plain missing container name")
 	}
 }
 
-func TestFormatReportWithUpdates(t *testing.T) {
-	msg := "Updating /mash-akkoma (sha256:aaabbbcccddd111222333444 to sha256:777888999000aaabbbcccddd)\n" +
-		"Updating /mash-postgres (sha256:111222333444555666777888 to sha256:aaabbbcccddd111222333444)"
-	plain, html, ok := FormatUpdateReport(msg, testConfig)
-	if !ok {
-		t.Fatal("expected ok=true")
+func TestFormatUnmapped(t *testing.T) {
+	entry := containerInfo{
+		Name:      "akkoma-db-1",
+		ImageName: "postgres:16",
 	}
-	if !strings.Contains(plain, "Pentarou") {
-		t.Error("expected 'Pentarou' in plain")
+
+	plain, html := FormatContainerUpdate(entry, nil, nil)
+
+	if !strings.Contains(plain, "akkoma-db-1") {
+		t.Error("plain missing container name")
 	}
-	if !strings.Contains(plain, "Akkoma") {
-		t.Error("expected 'Akkoma' in plain")
+	if !strings.Contains(plain, "postgres:16") {
+		t.Error("plain missing image name")
 	}
-	if !strings.Contains(plain, "PostgreSQL") {
-		t.Error("expected 'PostgreSQL' in plain")
+	// Should NOT contain release notes or warning
+	if strings.Contains(plain, "🏷️") {
+		t.Error("unmapped container should not have tag")
 	}
-	if !strings.Contains(plain, "sha256:aaabbbcccddd") {
-		t.Error("expected short digest in plain")
+	if strings.Contains(plain, "⚠️") {
+		t.Error("unmapped container should not have warning")
 	}
-	if !strings.Contains(plain, "\u2192") {
-		t.Error("expected arrow in plain")
-	}
-	if !strings.Contains(html, "<strong>") {
-		t.Error("expected <strong> in html")
+	if !strings.Contains(html, "akkoma-db-1") {
+		t.Error("html missing container name")
 	}
 }
 
-func TestFormatReportNoUpdates(t *testing.T) {
-	msg := "No containers need updating"
-	_, _, ok := FormatUpdateReport(msg, testConfig)
-	if ok {
-		t.Error("expected ok=false for no updates")
+func TestRepoMapLookup(t *testing.T) {
+	tests := []struct {
+		name   string
+		mapped bool
+		repo   string
+	}{
+		{"akkoma-akkoma-1", true, "akkoma-im/akkoma"},
+		{"mash-traefik", true, "traefik/traefik"},
+		{"mash-miniflux", true, "miniflux/miniflux"},
+		{"akkoma-db-1", false, ""},
+		{"unknown-container", false, ""},
 	}
-}
 
-func TestFormatReportUsesServiceNames(t *testing.T) {
-	msg := "Updating /mash-postgres (sha256:aaa to sha256:bbb)"
-	plain, _, ok := FormatUpdateReport(msg, testConfig)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if !strings.Contains(plain, "PostgreSQL") {
-		t.Error("expected 'PostgreSQL' in plain")
-	}
-}
-
-func TestFormatReportHTMLHasTags(t *testing.T) {
-	msg := "Updating /mash-akkoma (sha256:aaa to sha256:bbb)"
-	_, html, ok := FormatUpdateReport(msg, testConfig)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if !strings.Contains(html, "<strong>") {
-		t.Error("expected <strong> in html")
-	}
-	if !strings.Contains(html, "<li>") {
-		t.Error("expected <li> in html")
-	}
-}
-
-func TestFormatReportUnknownService(t *testing.T) {
-	msg := "Updating /mash-somethingelse (sha256:aaa to sha256:bbb)"
-	plain, _, ok := FormatUpdateReport(msg, testConfig)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if !strings.Contains(plain, "somethingelse") {
-		t.Error("expected raw name 'somethingelse' in plain")
-	}
-}
-
-func TestParseNoMashPrefix(t *testing.T) {
-	msg := "Updating /mycontainer (sha256:aaa to sha256:bbb)"
-	updates := ParseWatchtowerMessage(msg)
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
-	}
-	if updates[0].Name != "mycontainer" {
-		t.Errorf("expected name 'mycontainer', got %q", updates[0].Name)
+	for _, tt := range tests {
+		repo, ok := RepoMap[tt.name]
+		if ok != tt.mapped {
+			t.Errorf("RepoMap[%q]: mapped=%v, want %v", tt.name, ok, tt.mapped)
+		}
+		if ok && repo != tt.repo {
+			t.Errorf("RepoMap[%q]=%q, want %q", tt.name, repo, tt.repo)
+		}
 	}
 }

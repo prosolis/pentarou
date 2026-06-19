@@ -190,6 +190,52 @@ func TestWebhookSendsOneMessagePerContainer(t *testing.T) {
 	}
 }
 
+// stalePayload mimics Watchtower running in monitor-only mode: available
+// updates land in the "stale" bucket and "updated" is always empty.
+func stalePayload(containers ...string) string {
+	var entries []string
+	for _, c := range containers {
+		entries = append(entries, fmt.Sprintf(
+			`{"name":%q,"imageName":"img/%s:latest","currentImageId":"sha256:aaa","latestImageId":"sha256:bbb","state":"Stale"}`, c, c))
+	}
+	return fmt.Sprintf(`{
+		"title":"Watchtower updates","host":"h",
+		"report":{
+			"updated":[],
+			"scanned":[],"failed":[],"skipped":[],"stale":[%s],"fresh":[]
+		}
+	}`, strings.Join(entries, ","))
+}
+
+func TestWebhookAnnouncesStaleContainersMonitorOnly(t *testing.T) {
+	mock := &mockNotifier{}
+	handler := NewWebhookHandler(serverTestConfig, mock)
+	body := stalePayload("mash-valkey", "lemmy-postgres-1")
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if len(mock.messages) != 2 {
+		t.Fatalf("expected 2 messages for stale containers, got %d", len(mock.messages))
+	}
+}
+
+func TestCollectUpdatesDedupesUpdatedAndStale(t *testing.T) {
+	r := &containerReport{
+		Updated: []containerInfo{{ID: "1", Name: "a"}},
+		Stale:   []containerInfo{{ID: "1", Name: "a"}, {ID: "2", Name: "b"}},
+	}
+	got := collectUpdates(r)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 deduped updates, got %d: %+v", len(got), got)
+	}
+}
+
 func TestWebhookHandlesShoutrrrWrapper(t *testing.T) {
 	mock := &mockNotifier{}
 	handler := NewWebhookHandler(serverTestConfig, mock)

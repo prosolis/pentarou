@@ -15,6 +15,29 @@ const (
 	matrixSendDelay      = 500 * time.Millisecond
 )
 
+// collectUpdates returns the containers that have an available update, merging
+// Watchtower's "updated" bucket (populated in auto-update mode) with its "stale"
+// bucket (populated in monitor-only mode). Entries are deduplicated by container
+// ID, falling back to name when ID is empty.
+func collectUpdates(r *containerReport) []containerInfo {
+	out := make([]containerInfo, 0, len(r.Updated)+len(r.Stale))
+	seen := make(map[string]struct{}, len(r.Updated)+len(r.Stale))
+	for _, group := range [][]containerInfo{r.Updated, r.Stale} {
+		for _, c := range group {
+			key := c.ID
+			if key == "" {
+				key = c.Name
+			}
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
@@ -47,10 +70,17 @@ func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 			return
 		}
 
-		log.Printf("INFO: Received webhook: title=%q host=%q updated=%d failed=%d",
-			payload.Title, payload.Host, len(payload.Report.Updated), len(payload.Report.Failed))
+		// Collect containers with an available update. In monitor-only mode
+		// Watchtower never actually updates anything, so it reports available
+		// updates in the "stale" bucket and leaves "updated" empty. In
+		// auto-update mode the reverse is true. Merge both (deduped) so Pentarou
+		// announces updates regardless of which mode Watchtower runs in.
+		updated := collectUpdates(&payload.Report)
 
-		updated := payload.Report.Updated
+		log.Printf("INFO: Received webhook: title=%q host=%q updates=%d (updated=%d stale=%d) failed=%d",
+			payload.Title, payload.Host, len(updated),
+			len(payload.Report.Updated), len(payload.Report.Stale), len(payload.Report.Failed))
+
 		if len(updated) == 0 {
 			if cfg.Notifications.SkipIfNoChanges {
 				log.Printf("INFO: No updates in payload -- skipping notification")

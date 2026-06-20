@@ -167,7 +167,7 @@ func TestWebhookSkipsWhenNoUpdates(t *testing.T) {
 	}
 }
 
-func TestWebhookSendsOneMessagePerContainer(t *testing.T) {
+func TestWebhookSendsSingleDigestForAllContainers(t *testing.T) {
 	mock := &mockNotifier{}
 	handler := NewWebhookHandler(serverTestConfig, mock)
 	body := validPayload("akkoma-db-1", "mash-valkey", "lemmy-postgres-1")
@@ -180,15 +180,20 @@ func TestWebhookSendsOneMessagePerContainer(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
-	if len(mock.messages) != 3 {
-		t.Fatalf("expected 3 messages (one per container), got %d", len(mock.messages))
+	// All containers are combined into a single digest message.
+	if len(mock.messages) != 1 {
+		t.Fatalf("expected 1 digest message, got %d", len(mock.messages))
 	}
+	msg := mock.messages[0]
 	// validPayload puts containers in the "updated" bucket (auto-update mode),
-	// so each should be announced as an applied update.
-	for _, msg := range mock.messages {
-		if !strings.Contains(msg.plain, "✅ Updated:") {
-			t.Errorf("message missing applied-update header: %q", msg.plain)
+	// so each should be announced as an applied update within the digest.
+	for _, name := range []string{"akkoma-db-1", "mash-valkey", "lemmy-postgres-1"} {
+		if !strings.Contains(msg.plain, name) {
+			t.Errorf("digest missing container %q: %q", name, msg.plain)
 		}
+	}
+	if strings.Count(msg.plain, "✅ Updated:") != 3 {
+		t.Errorf("expected 3 applied-update headers in digest, got %q", msg.plain)
 	}
 }
 
@@ -222,14 +227,13 @@ func TestWebhookAnnouncesStaleContainersMonitorOnly(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
-	if len(mock.messages) != 2 {
-		t.Fatalf("expected 2 messages for stale containers, got %d", len(mock.messages))
+	if len(mock.messages) != 1 {
+		t.Fatalf("expected 1 digest message for stale containers, got %d", len(mock.messages))
 	}
 	// Monitor-only mode: containers are stale, not yet updated.
-	for _, msg := range mock.messages {
-		if !strings.Contains(msg.plain, "🔔 Update available:") {
-			t.Errorf("stale message should report '🔔 Update available:', got %q", msg.plain)
-		}
+	msg := mock.messages[0]
+	if strings.Count(msg.plain, "🔔 Update available:") != 2 {
+		t.Errorf("digest should report '🔔 Update available:' for both stale containers, got %q", msg.plain)
 	}
 }
 

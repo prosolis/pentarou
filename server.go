@@ -7,13 +7,9 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 )
 
-const (
-	maxConcurrentFetches = 4
-	matrixSendDelay      = 500 * time.Millisecond
-)
+const maxConcurrentFetches = 4
 
 // containerUpdate pairs a container with the kind of update event it represents.
 type containerUpdate struct {
@@ -148,22 +144,18 @@ func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 		}
 		wg.Wait()
 
-		// Send one Matrix message per container, with delay between sends.
-		for i, entry := range updated {
-			if ctx.Err() != nil {
-				log.Printf("WARNING: context cancelled, skipping remaining %d notifications", len(updated)-i)
-				break
-			}
-			plain, html := FormatContainerUpdate(entry.info, entry.kind, results[i].release, results[i].err)
-			if err := notifier.SendMessageToRoom(ctx, updatesRoom, plain, html); err != nil {
-				log.Printf("ERROR: failed to send update for %s: %v", entry.info.Name, err)
-			}
-			if i < len(updated)-1 {
-				select {
-				case <-time.After(matrixSendDelay):
-				case <-ctx.Done():
-				}
-			}
+		// Combine all container updates into a single digest message so a
+		// multi-container Watchtower run produces one cohesive notification
+		// instead of a stream of disjointed one-liners.
+		releases := make([]*GitHubRelease, len(updated))
+		fetchErrs := make([]error, len(updated))
+		for i := range results {
+			releases[i] = results[i].release
+			fetchErrs[i] = results[i].err
+		}
+		plain, html := FormatUpdateDigest(updated, releases, fetchErrs)
+		if err := notifier.SendMessageToRoom(ctx, updatesRoom, plain, html); err != nil {
+			log.Printf("ERROR: failed to send update digest (%d containers): %v", len(updated), err)
 		}
 
 		w.WriteHeader(http.StatusOK)

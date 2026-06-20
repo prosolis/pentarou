@@ -215,6 +215,28 @@ func TestFormatUnmapped(t *testing.T) {
 	}
 }
 
+func TestFormatUpdateDigestCombinesEntries(t *testing.T) {
+	updates := []containerUpdate{
+		{info: containerInfo{Name: "mash-valkey", ImageName: "valkey:9"}, kind: updateApplied},
+		{info: containerInfo{Name: "akkoma-db-1", ImageName: "postgres:16"}, kind: updateApplied},
+	}
+
+	plain, html := FormatUpdateDigest(updates, nil, nil)
+
+	for _, want := range []string{"mash-valkey", "valkey:9", "akkoma-db-1", "postgres:16"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("digest plain missing %q: %q", want, plain)
+		}
+	}
+	if strings.Count(plain, "✅ Updated:") != 2 {
+		t.Errorf("expected 2 headers in plain digest, got %q", plain)
+	}
+	// HTML entries are divided by a horizontal rule.
+	if !strings.Contains(html, "<hr>") {
+		t.Errorf("digest html missing <hr> separator: %q", html)
+	}
+}
+
 func TestRepoMapLookup(t *testing.T) {
 	tests := []struct {
 		name   string

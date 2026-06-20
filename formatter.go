@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"strings"
 )
 
 // watchtowerPayload is the Watchtower json.v1 notification format.
@@ -52,16 +53,18 @@ const (
 
 // RepoMap maps container names to GitHub owner/repo for release note lookups.
 var RepoMap = map[string]string{
-	"akkoma-akkoma-1":       "akkoma-im/akkoma",
-	"lemmy-lemmy-1":         "LemmyNet/lemmy",
-	"lemmy-lemmy-ui-1":      "LemmyNet/lemmy-ui",
-	"lemmy-pictrs-1":        "asonix/pictrs",
-	"authentik-server-1":    "goauthentik/authentik",
-	"mash-gitea":            "go-gitea/gitea",
-	"mash-miniflux":         "miniflux/miniflux",
-	"mash-traefik":          "traefik/traefik",
-	"mash-uptime-kuma":      "louislam/uptime-kuma",
-	"mash-writefreely":      "writefreely/writefreely",
+	"akkoma-akkoma-1":    "akkoma-im/akkoma",
+	"lemmy-lemmy-1":      "LemmyNet/lemmy",
+	"lemmy-lemmy-ui-1":   "LemmyNet/lemmy-ui",
+	"lemmy-pictrs-1":     "asonix/pictrs",
+	"authentik-server-1": "goauthentik/authentik",
+	"mash-gitea":         "go-gitea/gitea",
+	"mash-miniflux":      "miniflux/miniflux",
+	"mash-traefik":       "traefik/traefik",
+	"mash-uptime-kuma":   "louislam/uptime-kuma",
+	"mash-valkey":        "valkey-io/valkey",
+	"mash-writefreely":   "writefreely/writefreely",
+	"watchtower":         "nicholas-fedor/watchtower",
 }
 
 // ParseWatchtowerPayload parses a Watchtower json.v1 payload from raw bytes.
@@ -97,6 +100,31 @@ func ParseWatchtowerPayload(body []byte) (*watchtowerPayload, error) {
 func hasReportData(r *containerReport) bool {
 	return r.Updated != nil || r.Scanned != nil || r.Failed != nil ||
 		r.Skipped != nil || r.Stale != nil || r.Fresh != nil
+}
+
+// FormatUpdateDigest combines several container updates into a single Matrix
+// message, so a Watchtower run that touches multiple containers produces one
+// cohesive notification instead of a stream of disjointed one-liners. releases
+// and fetchErrs are indexed in parallel with updates (nil entries are fine).
+func FormatUpdateDigest(updates []containerUpdate, releases []*GitHubRelease, fetchErrs []error) (plain, htmlOut string) {
+	plains := make([]string, len(updates))
+	htmls := make([]string, len(updates))
+	for i, u := range updates {
+		var rel *GitHubRelease
+		var ferr error
+		if i < len(releases) {
+			rel = releases[i]
+		}
+		if i < len(fetchErrs) {
+			ferr = fetchErrs[i]
+		}
+		plains[i], htmls[i] = FormatContainerUpdate(u.info, u.kind, rel, ferr)
+	}
+
+	// A blank line separates plain-text entries; an <hr> divides HTML entries.
+	plain = strings.Join(plains, "\n\n")
+	htmlOut = strings.Join(htmls, "\n<hr>\n")
+	return
 }
 
 // FormatContainerUpdate builds a Matrix message for a single container update.

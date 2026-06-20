@@ -15,15 +15,31 @@ const (
 	matrixSendDelay      = 500 * time.Millisecond
 )
 
+// containerUpdate pairs a container with the kind of update event it represents.
+type containerUpdate struct {
+	info containerInfo
+	kind updateKind
+}
+
 // collectUpdates returns the containers that have an available update, merging
 // Watchtower's "updated" bucket (populated in auto-update mode) with its "stale"
-// bucket (populated in monitor-only mode). Entries are deduplicated by container
-// ID, falling back to name when ID is empty.
-func collectUpdates(r *containerReport) []containerInfo {
-	out := make([]containerInfo, 0, len(r.Updated)+len(r.Stale))
+// bucket (populated in monitor-only mode). Each entry records which bucket it
+// came from so the notification can distinguish an applied update from an
+// available one. Entries are deduplicated by container ID, falling back to name
+// when ID is empty; the "updated" bucket is processed first so an applied update
+// wins over a stale duplicate.
+func collectUpdates(r *containerReport) []containerUpdate {
+	out := make([]containerUpdate, 0, len(r.Updated)+len(r.Stale))
 	seen := make(map[string]struct{}, len(r.Updated)+len(r.Stale))
-	for _, group := range [][]containerInfo{r.Updated, r.Stale} {
-		for _, c := range group {
+	groups := []struct {
+		containers []containerInfo
+		kind       updateKind
+	}{
+		{r.Updated, updateApplied},
+		{r.Stale, updateAvailable},
+	}
+	for _, group := range groups {
+		for _, c := range group.containers {
 			key := c.ID
 			if key == "" {
 				key = c.Name
@@ -32,7 +48,7 @@ func collectUpdates(r *containerReport) []containerInfo {
 				continue
 			}
 			seen[key] = struct{}{}
-			out = append(out, c)
+			out = append(out, containerUpdate{info: c, kind: group.kind})
 		}
 	}
 	return out
@@ -106,7 +122,7 @@ func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 		ctx := r.Context()
 
 		for i, entry := range updated {
-			repoPath, mapped := RepoMap[entry.Name]
+			repoPath, mapped := RepoMap[entry.info.Name]
 			if !mapped {
 				continue
 			}
@@ -138,9 +154,9 @@ func NewWebhookHandler(cfg *Config, notifier Notifier) http.Handler {
 				log.Printf("WARNING: context cancelled, skipping remaining %d notifications", len(updated)-i)
 				break
 			}
-			plain, html := FormatContainerUpdate(entry, results[i].release, results[i].err)
+			plain, html := FormatContainerUpdate(entry.info, entry.kind, results[i].release, results[i].err)
 			if err := notifier.SendMessageToRoom(ctx, updatesRoom, plain, html); err != nil {
-				log.Printf("ERROR: failed to send update for %s: %v", entry.Name, err)
+				log.Printf("ERROR: failed to send update for %s: %v", entry.info.Name, err)
 			}
 			if i < len(updated)-1 {
 				select {

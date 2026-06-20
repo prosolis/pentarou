@@ -132,7 +132,7 @@ func TestFormatMappedWithRelease(t *testing.T) {
 		HTMLURL:  "https://github.com/akkoma-im/akkoma/releases/tag/v3.13.0",
 	}
 
-	plain, html := FormatContainerUpdate(entry, release, nil)
+	plain, html := FormatContainerUpdate(entry, updateAvailable, release, nil)
 
 	for _, want := range []string{"akkoma-akkoma-1", "ghcr.io/akkoma-im/akkoma:latest", "v3.13.0", "Fixed a bug"} {
 		if !strings.Contains(plain, want) {
@@ -150,13 +150,33 @@ func TestFormatMappedWithRelease(t *testing.T) {
 	}
 }
 
+func TestFormatHeaderReflectsUpdateKind(t *testing.T) {
+	entry := containerInfo{Name: "akkoma-db-1", ImageName: "postgres:16"}
+
+	appliedPlain, appliedHTML := FormatContainerUpdate(entry, updateApplied, nil, nil)
+	if !strings.Contains(appliedPlain, "✅ Updated:") {
+		t.Errorf("applied update plain should report '✅ Updated:', got %q", appliedPlain)
+	}
+	if !strings.Contains(appliedHTML, "✅ Updated:") {
+		t.Errorf("applied update html should report '✅ Updated:', got %q", appliedHTML)
+	}
+
+	availPlain, availHTML := FormatContainerUpdate(entry, updateAvailable, nil, nil)
+	if !strings.Contains(availPlain, "🔔 Update available:") {
+		t.Errorf("available update plain should report '🔔 Update available:', got %q", availPlain)
+	}
+	if !strings.Contains(availHTML, "🔔 Update available:") {
+		t.Errorf("available update html should report '🔔 Update available:', got %q", availHTML)
+	}
+}
+
 func TestFormatMappedGitHubError(t *testing.T) {
 	entry := containerInfo{
 		Name:      "mash-traefik",
 		ImageName: "traefik:latest",
 	}
 
-	plain, html := FormatContainerUpdate(entry, nil, fmt.Errorf("rate limited"))
+	plain, html := FormatContainerUpdate(entry, updateAvailable, nil, fmt.Errorf("rate limited"))
 
 	if !strings.Contains(plain, "⚠️ Could not fetch release notes.") {
 		t.Error("plain missing warning")
@@ -175,7 +195,7 @@ func TestFormatUnmapped(t *testing.T) {
 		ImageName: "postgres:16",
 	}
 
-	plain, html := FormatContainerUpdate(entry, nil, nil)
+	plain, html := FormatContainerUpdate(entry, updateApplied, nil, nil)
 
 	if !strings.Contains(plain, "akkoma-db-1") {
 		t.Error("plain missing container name")

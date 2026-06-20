@@ -36,13 +36,28 @@ type containerInfo struct {
 	State          string `json:"state"`
 }
 
+// updateKind records which Watchtower report bucket a container came from, so
+// the notification can distinguish a completed update (auto-update mode) from an
+// update that is merely available (monitor-only mode).
+type updateKind int
+
+const (
+	// updateAvailable means Watchtower detected a newer image but did not apply
+	// it — the container appears in the "stale" bucket (monitor-only mode).
+	updateAvailable updateKind = iota
+	// updateApplied means Watchtower actually pulled and recreated the container
+	// — it appears in the "updated" bucket (auto-update mode).
+	updateApplied
+)
+
 // RepoMap maps container names to GitHub owner/repo for release note lookups.
 var RepoMap = map[string]string{
 	"akkoma-akkoma-1":       "akkoma-im/akkoma",
 	"lemmy-lemmy-1":         "LemmyNet/lemmy",
 	"lemmy-lemmy-ui-1":      "LemmyNet/lemmy-ui",
 	"lemmy-pictrs-1":        "asonix/pictrs",
-	"mash-authentik-server": "goauthentik/authentik",
+	"authentik-server-1":    "goauthentik/authentik",
+	"mash-gitea":            "go-gitea/gitea",
 	"mash-miniflux":         "miniflux/miniflux",
 	"mash-traefik":          "traefik/traefik",
 	"mash-uptime-kuma":      "louislam/uptime-kuma",
@@ -86,23 +101,30 @@ func hasReportData(r *containerReport) bool {
 
 // FormatContainerUpdate builds a Matrix message for a single container update.
 // All values interpolated into HTML are escaped to prevent injection.
-func FormatContainerUpdate(entry containerInfo, release *GitHubRelease, fetchErr error) (plain, htmlOut string) {
+func FormatContainerUpdate(entry containerInfo, kind updateKind, release *GitHubRelease, fetchErr error) (plain, htmlOut string) {
 	_, mapped := RepoMap[entry.Name]
 
 	eName := html.EscapeString(entry.Name)
 	eImage := html.EscapeString(entry.ImageName)
 
+	// Header reflects whether Watchtower applied the update or merely found one.
+	header := "🔔 Update available"
+	if kind == updateApplied {
+		header = "✅ Updated"
+	}
+	eHeader := html.EscapeString(header)
+
 	if !mapped {
 		// Unmapped container — minimal notification, no release notes.
-		plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s", entry.Name, entry.ImageName)
-		htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>", eName, eImage)
+		plain = fmt.Sprintf("%s: %s\n📦 %s", header, entry.Name, entry.ImageName)
+		htmlOut = fmt.Sprintf("<p>%s: %s</p>\n<p>📦 %s</p>", eHeader, eName, eImage)
 		return
 	}
 
 	if release == nil || fetchErr != nil {
 		// Mapped but GitHub API failed.
-		plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s\n⚠️ Could not fetch release notes.", entry.Name, entry.ImageName)
-		htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>\n<p>⚠️ Could not fetch release notes.</p>", eName, eImage)
+		plain = fmt.Sprintf("%s: %s\n📦 %s\n⚠️ Could not fetch release notes.", header, entry.Name, entry.ImageName)
+		htmlOut = fmt.Sprintf("<p>%s: %s</p>\n<p>📦 %s</p>\n<p>⚠️ Could not fetch release notes.</p>", eHeader, eName, eImage)
 		if fetchErr != nil {
 			log.Printf("WARNING: GitHub API error for %s: %v", entry.Name, fetchErr)
 		}
@@ -115,11 +137,11 @@ func FormatContainerUpdate(entry containerInfo, release *GitHubRelease, fetchErr
 	// Mapped with release notes.
 	// Plain text uses raw values (no HTML rendering). HTML uses escaped values
 	// except for BodyHTML which is pre-rendered by GitHub's own sanitizer.
-	plain = fmt.Sprintf("🔔 Update available: %s\n📦 %s\n🏷️ %s\n📝\n%s\n🔗 %s",
-		entry.Name, entry.ImageName, release.TagName, release.Body, release.HTMLURL)
+	plain = fmt.Sprintf("%s: %s\n📦 %s\n🏷️ %s\n📝\n%s\n🔗 %s",
+		header, entry.Name, entry.ImageName, release.TagName, release.Body, release.HTMLURL)
 
-	htmlOut = fmt.Sprintf("<p>🔔 Update available: %s</p>\n<p>📦 %s</p>\n<p>🏷️ %s</p>\n📝\n%s\n<p>🔗 <a href=\"%s\">%s</a></p>",
-		eName, eImage, eTag, release.BodyHTML, eURL, eURL)
+	htmlOut = fmt.Sprintf("<p>%s: %s</p>\n<p>📦 %s</p>\n<p>🏷️ %s</p>\n📝\n%s\n<p>🔗 <a href=\"%s\">%s</a></p>",
+		eHeader, eName, eImage, eTag, release.BodyHTML, eURL, eURL)
 
 	return
 }

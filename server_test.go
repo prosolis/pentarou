@@ -183,9 +183,11 @@ func TestWebhookSendsOneMessagePerContainer(t *testing.T) {
 	if len(mock.messages) != 3 {
 		t.Fatalf("expected 3 messages (one per container), got %d", len(mock.messages))
 	}
+	// validPayload puts containers in the "updated" bucket (auto-update mode),
+	// so each should be announced as an applied update.
 	for _, msg := range mock.messages {
-		if !strings.Contains(msg.plain, "🔔 Update available:") {
-			t.Errorf("message missing update header: %q", msg.plain)
+		if !strings.Contains(msg.plain, "✅ Updated:") {
+			t.Errorf("message missing applied-update header: %q", msg.plain)
 		}
 	}
 }
@@ -223,6 +225,12 @@ func TestWebhookAnnouncesStaleContainersMonitorOnly(t *testing.T) {
 	if len(mock.messages) != 2 {
 		t.Fatalf("expected 2 messages for stale containers, got %d", len(mock.messages))
 	}
+	// Monitor-only mode: containers are stale, not yet updated.
+	for _, msg := range mock.messages {
+		if !strings.Contains(msg.plain, "🔔 Update available:") {
+			t.Errorf("stale message should report '🔔 Update available:', got %q", msg.plain)
+		}
+	}
 }
 
 func TestCollectUpdatesDedupesUpdatedAndStale(t *testing.T) {
@@ -233,6 +241,14 @@ func TestCollectUpdatesDedupesUpdatedAndStale(t *testing.T) {
 	got := collectUpdates(r)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 deduped updates, got %d: %+v", len(got), got)
+	}
+	// Container "a" appears in both buckets; the "updated" bucket wins, so it
+	// is reported as an applied update rather than merely available.
+	if got[0].info.Name != "a" || got[0].kind != updateApplied {
+		t.Errorf("expected container 'a' to be updateApplied, got %+v", got[0])
+	}
+	if got[1].info.Name != "b" || got[1].kind != updateAvailable {
+		t.Errorf("expected container 'b' to be updateAvailable, got %+v", got[1])
 	}
 }
 
